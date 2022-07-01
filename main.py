@@ -7,6 +7,8 @@ import numpy as np
 
 # from imblearn.over_sampling import SMOTE # pip install imbalanced-learn
 import datetime
+from sklearn.utils import resample
+from statistics import mode
 
 
 # Read input
@@ -54,34 +56,54 @@ X_test = test[features].values.astype('float32')
 # convert list of labels to binary class matrix
 y_train = np_utils.to_categorical(labels)
 
-input_dim = X_train.shape[1]
-nb_classes = y_train.shape[1]
-epochs = 100
+# アンサンブル学習
+K = 13
+SIZE = len(X_train)
+models = []
 
-# Here's a Deep Dumb MLP (DDMLP)
-model = Sequential()
-model.add(Dense(128, input_dim=input_dim))
-model.add(Activation('relu'))
-model.add(Dropout(0.15))
-model.add(Dense(128))
-model.add(Activation('relu'))
-model.add(Dropout(0.15))
-model.add(Dense(nb_classes))
-model.add(Activation('softmax'))
+# bootstrap sampling
+for i in range(K):
+    print("ensemble num = {}".format(i + 1))
 
-# we'll use categorical xent for the loss, and RMSprop as the optimizer
-model.compile(loss='categorical_crossentropy', optimizer='rmsprop', metrics=["accuracy"])
+    resampled_X_train, resampled_y_train = resample(X_train, y_train, n_samples=SIZE)
 
-print("Training...")
-model.fit(X_train, y_train, epochs=epochs, batch_size=16, validation_split=0.1, verbose=1)
+    input_dim = resampled_X_train.shape[1]
+    nb_classes = resampled_y_train.shape[1]
+    epochs = 100
 
-preds = np.argmax(model.predict(X_test), axis=-1)
+    # Here's a Deep Dumb MLP (DDMLP)
+    model = Sequential()
+    model.add(Dense(128, input_dim=input_dim))
+    model.add(Activation('relu'))
+    model.add(Dropout(0.15))
+    model.add(Dense(128))
+    model.add(Activation('relu'))
+    model.add(Dropout(0.15))
+    model.add(Dense(nb_classes))
+    model.add(Activation('softmax'))
+
+    # we'll use categorical xent for the loss, and RMSprop as the optimizer
+    model.compile(loss='categorical_crossentropy', optimizer='rmsprop', metrics=["accuracy"])
+
+    print("Training...")
+    model.fit(resampled_X_train, resampled_y_train, epochs=epochs, batch_size=16, validation_split=0.1, verbose=1)
+
+    models.append(model)
+
+predses = []
+for model in models:
+
+    preds = np.argmax(model.predict(X_test), axis=-1).tolist()
+    predses.append(preds)
+
+t_predses = pd.DataFrame(predses).T.values.tolist()
+ensemble_preds = map(mode, t_predses)
 
 # PassengerIdを取得
 PassengerId = np.array(test["PassengerId"]).astype(int)
 
 # my_prediction(予測データ）とPassengerIdをデータフレームへ落とし込む
-solution = pd.DataFrame(preds, PassengerId, columns=["Survived"])
+solution = pd.DataFrame(ensemble_preds, PassengerId, columns=["Survived"])
 
 # my_tree_one.csvとして書き出し
 dt_now = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
